@@ -1,0 +1,2 @@
+# Remnawave_node_click
+Remnawave节点一键安装脚本生成器
