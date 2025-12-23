@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Remnawave Node 一键安装命令生成器（YAML→参数）</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    body { margin: 0; padding: 24px; background: #f6f7fb; color: #111; }
+    .wrap { max-width: 1140px; margin: 0 auto; }
+    .card { background: #fff; border: 1px solid #e5e7ef; border-radius: 14px; padding: 18px; box-shadow: 0 8px 24px rgba(0,0,0,.06); }
+    h1 { font-size: 20px; margin: 0 0 8px; }
+    .muted { color: #555; font-size: 14px; line-height: 1.5; }
+    .warn { background: #fff7e6; border: 1px solid #ffe1a6; padding: 10px 12px; border-radius: 12px; font-size: 13px; margin-top: 12px; }
+    code.inline { background: #f0f2ff; padding: 2px 6px; border-radius: 6px; }
+    label { display: block; font-size: 13px; color: #333; margin: 10px 0 6px; }
+    input[type="text"], select, textarea {
+      width: 100%; box-sizing: border-box; padding: 10px 12px;
+      border: 1px solid #d7daea; border-radius: 10px; outline: none;
+      font-size: 14px; background: #fff;
+    }
+    textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    #yaml { min-height: 260px; }
+    #oneClickCmd { min-height: 180px; }
+    #scriptPreview { min-height: 260px; }
+    .row { display: grid; grid-template-columns: 1.1fr .9fr; gap: 14px; margin-top: 14px; }
+    .subrow { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .btns { display:flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+    button {
+      border: 0; border-radius: 10px; padding: 10px 12px;
+      background: #1b5cff; color: #fff; font-size: 14px; cursor: pointer;
+    }
+    button.secondary { background: #eef2ff; color: #1b5cff; border: 1px solid #cfd8ff; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .kv { display:grid; grid-template-columns: 140px 1fr; gap: 8px; font-size: 14px; }
+    .kv div { padding: 8px 10px; background: #f7f8fe; border: 1px solid #e6e8f7; border-radius: 10px; }
+    .status { margin-top: 8px; font-size: 13px; color: #333; }
+    .status.bad { color: #b00020; }
+    .status.good { color: #0b6b2d; }
+    .small { font-size: 12px; color: #666; }
+    a { color: #1b5cff; text-decoration: none; }
+    .pill { display:inline-block; font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid #d7daea; background:#fafbff; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Remnawave Node 一键安装命令生成器（从 docker-compose.yml 提取 → 调通用脚本参数）</h1>
+      <div class="muted">
+        左侧粘贴 Remnawave 生成的 <code class="inline">docker-compose.yml</code>，解析
+        <code class="inline">services</code> → 目标服务（默认 <code class="inline">remnanode</code>）→ <code class="inline">environment</code>，
+        然后生成一条推荐的一键命令：
+        <span class="pill">curl 脚本 | sudo bash -s -- 参数</span>
+      </div>
+
+      <div class="warn">
+        <b>安全提醒：</b>不要把 <b>SECRET_KEY</b> 放到 URL Query 里（会进历史/代理/日志）。本页面把 SECRET_KEY 放在命令参数里，并用单引号转义。
+      </div>
+
+      <div class="row">
+        <!-- Left: YAML input + extracted values -->
+        <div>
+          <label>粘贴 docker-compose.yml（YAML）</label>
+          <textarea id="yaml" spellcheck="false" placeholder="在这里粘贴 docker-compose.yml 内容..."></textarea>
+          <div id="parseStatus" class="status">等待粘贴 YAML…</div>
+
+          <div class="subrow">
+            <div>
+              <label>服务名（services 下的 key）</label>
+              <input id="serviceName" type="text" value="remnanode" />
+            </div>
+            <div>
+              <label>启动后是否跟随日志</label>
+              <select id="followLogs">
+                <option value="yes" selected>是（docker compose logs -f）</option>
+                <option value="no">否</option>
+              </select>
+            </div>
+          </div>
+
+          <label>安装目录</label>
+          <input id="projectDir" type="text" value="/opt/remnanode" />
+
+          <label>镜像覆盖（可选：不填则用 YAML 的 image）</label>
+          <input id="imageOverride" type="text" placeholder="例如 remnawave/node:latest" />
+
+          <label>通用脚本直链地址（你部署后的 URL）</label>
+          <input id="baseUrl" type="text" placeholder="https://example.com/install-remnanode.sh" />
+
+          <div style="margin-top:12px;">
+            <div class="muted">从 YAML 提取到的关键信息：</div>
+            <div class="kv" style="margin-top:8px;">
+              <div>NODE_PORT</div><div id="nodePort">-</div>
+              <div>SECRET_KEY</div><div id="secretKey" style="word-break: break-all;">-</div>
+              <div>image</div><div id="imageVal">-</div>
+              <div>network_mode</div><div id="netMode">-</div>
+              <div>nofile soft/hard</div><div id="nofileVal">-</div>
+            </div>
+            <div class="small" style="margin-top:8px;">
+              支持 <code class="inline">environment</code> 为列表（<code class="inline">- KEY=VALUE</code>）或字典（<code class="inline">KEY: VALUE</code>）。
+            </div>
+          </div>
+
+          <div class="btns">
+            <button id="genCmd" disabled>生成一键命令</button>
+            <button id="copyCmd" class="secondary" disabled>复制一键命令</button>
+            <button id="genScript" class="secondary">生成通用脚本预览</button>
+            <button id="copyScript" class="secondary">复制通用脚本</button>
+          </div>
+        </div>
+
+        <!-- Right: command + script preview -->
+        <div>
+          <label>生成的一键命令（复制到节点服务器执行）</label>
+          <textarea id="oneClickCmd" spellcheck="false" placeholder="这里会显示一键命令..."></textarea>
+          <div class="small">
+            说明：命令会从 <code class="inline">baseUrl</code> 下载通用脚本并传参执行。你需要先把通用脚本部署到可访问的 URL。
+          </div>
+
+          <label style="margin-top:14px;">通用脚本预览（install-remnanode.sh）</label>
+          <textarea id="scriptPreview" spellcheck="false" placeholder="这里是通用脚本内容（可复制部署）..."></textarea>
+        </div>
+      </div>
+
+      <div class="warn" style="margin-top:14px;">
+        <b>部署建议：</b>把通用脚本放在你自己的静态站点或 GitHub Raw。然后在本页填写该 URL，再生成一键命令。
+      </div>
+    </div>
+  </div>
+
+  <!-- YAML parser -->
+  <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
+
+  <script>
+    const el = (id) => document.getElementById(id);
+
+    const yamlTA = el('yaml');
+    const serviceNameInput = el('serviceName');
+    const projectDirInput = el('projectDir');
+    const imageOverrideInput = el('imageOverride');
+    const followLogsSelect = el('followLogs');
+    const baseUrlInput = el('baseUrl');
+
+    const nodePortEl = el('nodePort');
+    const secretKeyEl = el('secretKey');
+    const imageValEl = el('imageVal');
+    const netModeEl = el('netMode');
+    const nofileValEl = el('nofileVal');
+
+    const parseStatus = el('parseStatus');
+
+    const genCmdBtn = el('genCmd');
+    const copyCmdBtn = el('copyCmd');
+    const genScriptBtn = el('genScript');
+    const copyScriptBtn = el('copyScript');
+
+    const oneClickCmdTA = el('oneClickCmd');
+    const scriptPreviewTA = el('scriptPreview');
+
+    let composeObj = null;
+    let extracted = null;
+
+    function setStatus(text, good=false) {
+      parseStatus.textContent = text;
+      parseStatus.classList.remove('good','bad');
+      if (!text || text.startsWith('等待')) return;
+      parseStatus.classList.add(good ? 'good' : 'bad');
+    }
+
+    function stripOuterQuotes(s) {
+      if (typeof s !== 'string') return s;
+      const t = s.trim();
+      if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
+        return t.slice(1, -1);
+      }
+      return t;
+    }
+
+    function parseEnv(envNode) {
+      const env = {};
+      if (Array.isArray(envNode)) {
+        for (const item of envNode) {
+          if (typeof item !== 'string') continue;
+          const idx = item.indexOf('=');
+          if (idx <= 0) continue;
+          const k = item.slice(0, idx).trim();
+          const v = stripOuterQuotes(item.slice(idx + 1));
+          env[k] = v;
+        }
+      } else if (envNode && typeof envNode === 'object') {
+        for (const [k, v] of Object.entries(envNode)) {
+          env[k] = stripOuterQuotes(String(v));
+        }
+      }
+      return env;
+    }
+
+    function extractFromCompose(obj, serviceName) {
+      const svc = obj?.services?.[serviceName];
+      if (!svc) throw new Error(`找不到 services.${serviceName}`);
+      const env = parseEnv(svc.environment);
+
+      return {
+        serviceName,
+        nodePort: env.NODE_PORT ?? '',
+        secretKey: env.SECRET_KEY ?? '',
+        image: svc.image ?? '',
+        networkMode: svc.network_mode ?? '',
+        restart: svc.restart ?? '',
+        ulimits: svc.ulimits ?? null,
+      };
+    }
+
+    function updateExtractedUI(info) {
+      nodePortEl.textContent = info?.nodePort || '-';
+
+      if (info?.secretKey) {
+        const s = String(info.secretKey);
+        secretKeyEl.textContent = s.length > 80 ? (s.slice(0, 32) + ' ... ' + s.slice(-16)) : s;
+      } else {
+        secretKeyEl.textContent = '-';
+      }
+
+      imageValEl.textContent = info?.image || '-';
+      netModeEl.textContent = info?.networkMode || '-';
+
+      const soft = info?.ulimits?.nofile?.soft ?? '';
+      const hard = info?.ulimits?.nofile?.hard ?? '';
+      nofileValEl.textContent = (soft && hard) ? `${soft} / ${hard}` : '-';
+    }
+
+    function setEnabled(ok) {
+      genCmdBtn.disabled = !ok;
+      copyCmdBtn.disabled = !ok;
+    }
+
+    function shellSingleQuote(s) {
+      // ' -> '\'' (bash safe)
+      return "'" + String(s).replace(/'/g, `'\\''`) + "'";
+    }
+
+    function buildOneClickCommand(baseUrl, params) {
+      const args = [];
+      args.push(`--node-port ${params.nodePort}`);
+      args.push(`--secret-key ${shellSingleQuote(params.secretKey)}`);
+
+      if (params.projectDir) args.push(`--project-dir ${shellSingleQuote(params.projectDir)}`);
+      if (params.service) args.push(`--service ${shellSingleQuote(params.service)}`);
+      if (params.image) args.push(`--image ${shellSingleQuote(params.image)}`);
+      if (params.networkMode) args.push(`--network-mode ${shellSingleQuote(params.networkMode)}`);
+      if (params.restart) args.push(`--restart ${shellSingleQuote(params.restart)}`);
+
+      if (params.nofileSoft && params.nofileHard) {
+        args.push(`--nofile-soft ${params.nofileSoft}`);
+        args.push(`--nofile-hard ${params.nofileHard}`);
+      }
+      if (params.followLogs === false) args.push(`--no-follow-logs`);
+
+      return `curl -fsSL ${shellSingleQuote(baseUrl)} | sudo bash -s -- \\\n  ${args.join(" \\\n  ")}`;
+    }
+
+    function universalScriptContent() {
+      // keep as literal, so user can copy-deploy
+      return `#!/usr/bin/env bash
+set -euo pipefail
+
+# Universal Remnawave Node installer (no YAML parsing here).
+# Usage:
+#   curl -fsSL https://example.com/install-remnanode.sh | sudo bash -s -- \\
+#     --project-dir /opt/remnanode \\
+#     --service remnanode \\
+#     --image remnawave/node:latest \\
+#     --network-mode host \\
+#     --restart always \\
+#     --node-port 2222 \\
+#     --secret-key '...'
+#
+# Optional:
+#   --nofile-soft 1048576 --nofile-hard 1048576
+#   --no-follow-logs
+
+PROJECT_DIR="/opt/remnanode"
+SERVICE="remnanode"
+IMAGE="remnawave/node:latest"
+NETWORK_MODE="host"
+RESTART_POLICY="always"
+NODE_PORT=""
+SECRET_KEY=""
+NOFILE_SOFT=""
+NOFILE_HARD=""
+FOLLOW_LOGS="yes"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  install-remnanode.sh [options]
+
+Required:
+  --node-port <port>
+  --secret-key <string>
+
+Optional:
+  --project-dir <dir>        (default: /opt/remnanode)
+  --service <name>           (default: remnanode)
+  --image <image:tag>        (default: remnawave/node:latest)
+  --network-mode <mode>      (default: host)
+  --restart <policy>         (default: always)
+  --nofile-soft <n>
+  --nofile-hard <n>
+  --no-follow-logs           (do not tail logs)
+
+Examples:
+  curl -fsSL https://example.com/install-remnanode.sh | sudo bash -s -- \\
+    --node-port 2222 --secret-key 'xxx' --image remnawave/node:latest
+EOF
+}
+
+need_root() {
+  if [[ "\${EUID}" -ne 0 ]]; then
+    echo "请用 root 运行：sudo bash install-remnanode.sh ..."
+    exit 1
+  fi
+}
+
+cmd_exists() { command -v "\$1" >/dev/null 2>&1; }
+
+parse_args() {
+  while [[ \$# -gt 0 ]]; do
+    case "\$1" in
+      --project-dir) PROJECT_DIR="\$2"; shift 2;;
+      --service) SERVICE="\$2"; shift 2;;
+      --image) IMAGE="\$2"; shift 2;;
+      --network-mode) NETWORK_MODE="\$2"; shift 2;;
+      --restart) RESTART_POLICY="\$2"; shift 2;;
+      --node-port) NODE_PORT="\$2"; shift 2;;
+      --secret-key) SECRET_KEY="\$2"; shift 2;;
+      --nofile-soft) NOFILE_SOFT="\$2"; shift 2;;
+      --nofile-hard) NOFILE_HARD="\$2"; shift 2;;
+      --no-follow-logs) FOLLOW_LOGS="no"; shift 1;;
+      -h|--help) usage; exit 0;;
+      *) echo "未知参数：\$1"; usage; exit 2;;
+    esac
+  done
+
+  if [[ -z "\${NODE_PORT}" || -z "\${SECRET_KEY}" ]]; then
+    echo "[ERR] 缺少必填参数：--node-port 和/或 --secret-key"
+    usage
+    exit 2
+  fi
+  if ! [[ "\${NODE_PORT}" =~ ^[0-9]+$ ]] || (( NODE_PORT < 1 || NODE_PORT > 65535 )); then
+    echo "[ERR] NODE_PORT 不合法：\${NODE_PORT}"
+    exit 2
+  fi
+}
+
+install_docker() {
+  if cmd_exists docker; then
+    return
+  fi
+  echo "[..] 安装 Docker..."
+  curl -fsSL https://get.docker.com | sh
+  systemctl enable --now docker >/dev/null 2>&1 || true
+}
+
+ensure_compose() {
+  if docker compose version >/dev/null 2>&1; then
+    return
+  fi
+  echo "[..] 安装 docker-compose-plugin..."
+  if cmd_exists apt-get; then
+    apt-get update -y
+    apt-get install -y docker-compose-plugin
+  elif cmd_exists dnf; then
+    dnf install -y docker-compose-plugin || dnf install -y docker-compose
+  elif cmd_exists yum; then
+    yum install -y docker-compose-plugin || yum install -y docker-compose
+  fi
+  docker compose version >/dev/null 2>&1 || { echo "[ERR] Docker Compose 不可用"; exit 1; }
+}
+
+write_compose() {
+  mkdir -p "\${PROJECT_DIR}"
+  local compose_file="\${PROJECT_DIR}/docker-compose.yml"
+
+  local ulimits_block=""
+  if [[ -n "\${NOFILE_SOFT}" && -n "\${NOFILE_HARD}" ]]; then
+    ulimits_block=\$'\\n'"    ulimits:
+      nofile:
+        soft: \${NOFILE_SOFT}
+        hard: \${NOFILE_HARD}"
+  fi
+
+  local sk="\${SECRET_KEY//\\\\/\\\\\\\\}"
+  sk="\${sk//\\"/\\\\\\"}"
+
+  cat > "\${compose_file}" <<EOF
+services:
+  \${SERVICE}:
+    container_name: \${SERVICE}
+    hostname: \${SERVICE}
+    image: \${IMAGE}
+    network_mode: \${NETWORK_MODE}
+    restart: \${RESTART_POLICY}\${ulimits_block}
+    environment:
+      - NODE_PORT=\${NODE_PORT}
+      - SECRET_KEY="\${sk}"
+EOF
+
+  echo "[OK] 已写入 \${compose_file}"
+}
+
+start() {
+  cd "\${PROJECT_DIR}"
+  docker compose up -d
+  docker compose ps || true
+  if [[ "\${FOLLOW_LOGS}" == "yes" ]]; then
+    docker compose logs -f -t --tail=200
+  fi
+}
+
+main() {
+  need_root
+  parse_args "\$@"
+  install_docker
+  ensure_compose
+  write_compose
+  echo
+  echo "提示：建议仅允许“面板服务器 IP”访问 NODE_PORT=\${NODE_PORT}（安全组/防火墙）。"
+  echo
+  start
+}
+
+main "\$@"
+`;
+    }
+
+    function tryParse() {
+      oneClickCmdTA.value = '';
+      setEnabled(false);
+      extracted = null;
+      composeObj = null;
+
+      const text = yamlTA.value || '';
+      if (!text.trim()) {
+        setStatus('等待粘贴 YAML…');
+        updateExtractedUI(null);
+        return;
+      }
+
+      try {
+        composeObj = jsyaml.load(text);
+        extracted = extractFromCompose(composeObj, serviceNameInput.value.trim() || 'remnanode');
+        updateExtractedUI(extracted);
+        setStatus('解析成功 ✅ 现在可以生成一键命令', true);
+        setEnabled(true);
+      } catch (e) {
+        console.error(e);
+        setStatus('解析失败：' + (e?.message || e), false);
+        updateExtractedUI(null);
+      }
+    }
+
+    let t = null;
+    function debounceParse() {
+      clearTimeout(t);
+      t = setTimeout(tryParse, 250);
+    }
+
+    yamlTA.addEventListener('input', debounceParse);
+    serviceNameInput.addEventListener('input', debounceParse);
+
+    genCmdBtn.addEventListener('click', () => {
+      if (!extracted) return;
+
+      const baseUrl = baseUrlInput.value.trim();
+      if (!baseUrl) {
+        alert('请填写通用脚本直链地址 baseUrl（例如 https://example.com/install-remnanode.sh）');
+        return;
+      }
+
+      const nofileSoft = extracted.ulimits?.nofile?.soft ?? '';
+      const nofileHard = extracted.ulimits?.nofile?.hard ?? '';
+
+      const params = {
+        nodePort: extracted.nodePort || "2222",
+        secretKey: extracted.secretKey || "",
+        projectDir: projectDirInput.value.trim() || "/opt/remnanode",
+        service: extracted.serviceName || "remnanode",
+        image: (imageOverrideInput.value.trim() || extracted.image || "remnawave/node:latest"),
+        networkMode: extracted.networkMode || "host",
+        restart: extracted.restart || "always",
+        nofileSoft: nofileSoft,
+        nofileHard: nofileHard,
+        followLogs: (followLogsSelect.value === "yes")
+      };
+
+      if (!params.secretKey) {
+        alert('YAML 中没有提取到 SECRET_KEY（environment 里缺少 SECRET_KEY）。');
+        return;
+      }
+
+      const cmd = buildOneClickCommand(baseUrl, params);
+      oneClickCmdTA.value = cmd;
+    });
+
+    copyCmdBtn.addEventListener('click', async () => {
+      const txt = oneClickCmdTA.value || '';
+      if (!txt.trim()) return alert('一键命令为空，请先生成。');
+      await navigator.clipboard.writeText(txt);
+      alert('已复制一键命令。');
+    });
+
+    genScriptBtn.addEventListener('click', () => {
+      scriptPreviewTA.value = universalScriptContent();
+    });
+
+    copyScriptBtn.addEventListener('click', async () => {
+      const txt = scriptPreviewTA.value || '';
+      if (!txt.trim()) scriptPreviewTA.value = universalScriptContent();
+      await navigator.clipboard.writeText(scriptPreviewTA.value);
+      alert('已复制通用脚本内容（install-remnanode.sh）。');
+    });
+
+    // Initialize script preview
+    scriptPreviewTA.value = universalScriptContent();
+
+    // Optional: example YAML prefill (you can delete this block)
+    yamlTA.value = `services:
+  remnanode:
+    container_name: remnanode
+    hostname: remnanode
+    image: remnawave/node:latest
+    network_mode: host
+    restart: always
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+    environment:
+      - NODE_PORT=2222
+      - SECRET_KEY="REPLACE_ME"
+`;
+    tryParse();
+  </script>
+</body>
+</html>
